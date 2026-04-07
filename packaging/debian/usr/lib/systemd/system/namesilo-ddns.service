@@ -1,0 +1,22 @@
+[Unit]
+Description=NameSilo DDNS one-shot update job
+Documentation=file:/usr/share/doc/namesilo-ddns/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/namesilo-ddns
+ExecStart=/usr/lib/namesilo-ddns/namesilo-ddns-check.sh
+User=root
+Group=root
+# Hardening suitable for a small network maintenance script.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/namesilo-ddns
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
