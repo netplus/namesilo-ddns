@@ -8,7 +8,7 @@ set -Eeuo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 PACKAGE_NAME="namesilo-ddns"
-VERSION="1.1.0"
+VERSION="1.2.0"
 BUILD_ROOT="$PROJECT_ROOT/.build"
 STAGE_DIR="$BUILD_ROOT/${PACKAGE_NAME}_${VERSION}"
 DIST_DIR="$PROJECT_ROOT/dist"
