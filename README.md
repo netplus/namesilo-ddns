@@ -1,175 +1,228 @@
 # namesilo-ddns
 
-A production-ready NameSilo DDNS updater built with **systemd timer + oneshot service**, designed for reliability, configurability, and clean deployment on Debian systems.
+NameSilo DDNS updater for Debian systems, implemented as a **systemd timer + oneshot service**.
+
+The updater detects the current public IP, compares it with the cached value, and updates the configured NameSilo DNS record only when the IP has changed.
 
 ---
 
-## ✨ Features
+## Features
 
-* Native **systemd timer-based scheduling**
-* **Oneshot execution model** (no daemon)
-* **HTTPS-first public IP detection**
-* DNS-based fallback (OpenDNS + Google)
-* Configurable **IP family selection** (`4`, `6`, `auto`)
-* Safe update: **no NameSilo API call if IP unchanged**
-* Detailed logging for network and DNS failures
-* Clean configuration via `/etc/default`
-* Native Debian `.deb` packaging
+- systemd timer-based scheduling
+- oneshot execution; no daemon
+- split configuration: general runtime settings and record-specific settings
+- adaptive public IP provider pool
+- provider statistics, cooldown, and exploration
+- IPv4 / IPv6 / auto lookup mode
+- no NameSilo API call when the cached IP is unchanged
+- Debian `.deb` packaging
 
 ---
 
-## 📦 Architecture
+## Configuration Layout
+
+namesilo-ddns uses two configuration files:
+
+```text
+/etc/default/namesilo-ddns
+    General runtime configuration:
+    provider pool, ranking mode, timeouts, state paths, logging behavior.
+
+/etc/namesilo-ddns/record.conf
+    Record-specific configuration:
+    API_KEY, DOMAIN, HOST, TTL.
+```
+
+This split keeps domain-specific values stable during package upgrades. Future changes to provider ranking, timeouts, or runtime defaults should normally affect only `/etc/default/namesilo-ddns`.
+
+---
+
+## Execution Flow
 
 ```text
 namesilo-ddns.timer
-        ↓
-namesilo-ddns.service (Type=oneshot)
-        ↓
-namesilo-ddns-check.sh
-        ↓
-IP detection (HTTPS → DNS fallback)
-        ↓
-NameSilo API
+    ↓
+namesilo-ddns.service
+    ↓
+load /etc/default/namesilo-ddns
+    ↓
+load /etc/namesilo-ddns/record.conf
+    ↓
+load provider statistics
+    ↓
+build and rank provider pool
+    ↓
+query public IP providers
+    ↓
+validate returned IP
+    ↓
+update provider statistics
+    ↓
+compare with cached IP
+    ├── unchanged → exit without calling NameSilo API
+    └── changed   → dnsListRecords → dnsUpdateRecord
 ```
 
-### Components
-
-| Component                    | Description                          |
-| ---------------------------- | ------------------------------------ |
-| `namesilo-ddns.timer`        | Schedules periodic execution         |
-| `namesilo-ddns.service`      | Runs one update cycle                |
-| `namesilo-ddns-check.sh`     | Performs IP detection and DNS update |
-| `/etc/default/namesilo-ddns` | Runtime configuration                |
+The public IP lookup path is a feedback-driven query flow, not a fixed fallback chain.
 
 ---
 
-## ⚙️ Execution Model
-
-Each execution performs:
-
-1. Detect current public IP
-2. Compare with cached IP
-3. If unchanged → **exit immediately**
-4. If changed → update NameSilo DNS record
-
-Important:
-
-* The service is **not a daemon**
-* It runs only when triggered
-* If IP is unchanged:
-
-  * No `dnsListRecords`
-  * No `dnsUpdateRecord`
-
----
-
-## 🏗️ How to Build
-
-### Prerequisites
+## Build
 
 ```bash
 sudo apt update
 sudo apt install -y dpkg-dev
-```
-
-### Build
-
-```bash
 chmod +x build-deb.sh
 ./build-deb.sh
 ```
 
-### Output
+The package is generated under:
 
 ```text
 ./dist/namesilo-ddns_<version>_all.deb
 ```
 
-### Install
+---
+
+## Install
 
 ```bash
 sudo dpkg -i dist/namesilo-ddns_<version>_all.deb
 ```
 
----
-
-## 🚀 Installation (from prebuilt package)
+Create the record-specific configuration before starting the timer:
 
 ```bash
-sudo dpkg -i namesilo-ddns_<version>_all.deb
+sudo cp /etc/namesilo-ddns/record.conf.example /etc/namesilo-ddns/record.conf
+sudo editor /etc/namesilo-ddns/record.conf
+sudo chmod 600 /etc/namesilo-ddns/record.conf
 ```
 
-Enable and start:
+Review general runtime configuration if needed:
+
+```bash
+sudo editor /etc/default/namesilo-ddns
+```
+
+Enable the timer:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now namesilo-ddns.timer
 ```
 
----
-
-## 🛠 Configuration
+Run once immediately:
 
 ```bash
-sudo editor /etc/default/namesilo-ddns
+sudo systemctl start namesilo-ddns.service
 ```
 
-Example:
+---
+
+## Record Configuration
+
+`/etc/namesilo-ddns/record.conf`:
 
 ```bash
-API_KEY="your_api_key"
+API_KEY="your_namesilo_api_key"
 DOMAIN="example.com"
 HOST="home"
 TTL="3600"
-
-# IP family: 4 / 6 / auto
-IP_FAMILY="4"
-
-# HTTPS fallback
-ENABLE_HTTP_FALLBACK="yes"
-HTTP_IP_ECHO_PRIMARY="https://api.ipify.org"
-HTTP_IP_ECHO_SECONDARY="https://ifconfig.co"
-
-# DNS tuning
-DIG_TIMEOUT_SEC="3"
-DIG_TRIES="1"
-DNS_LOOKUP_RETRY_DELAY_SEC="5"
 ```
 
-Apply:
+This file contains credentials and deployment-specific values. Keep it readable only by root.
+
+---
+
+## General Runtime Configuration
+
+`/etc/default/namesilo-ddns` contains runtime behavior such as provider selection, ranking, timeout, and state settings.
+
+Common settings:
 
 ```bash
-sudo systemctl restart namesilo-ddns.timer
+STATE_DIR="/var/lib/namesilo-ddns"
+DOMAIN_CONFIG_FILE="/etc/namesilo-ddns/record.conf"
+
+IP_FAMILY="4"
+IP_PROVIDER_MODE="adaptive"
+ENABLE_HTTP_PROVIDERS="yes"
+
+HTTP_IP_ECHO_PROVIDERS="https://ifconfig.co/ip https://ifconfig.me/ip https://ifconfig.io/ip https://ident.me https://icanhazip.com https://api.ipify.org"
+DNS_IP_ECHO_PROVIDERS="opendns google"
+
+PROVIDER_STATS_FILE="/var/lib/namesilo-ddns/provider_stats.tsv"
+PROVIDER_MAX_CONSECUTIVE_FAILS="3"
+PROVIDER_COOLDOWN_BASE_SEC="300"
+PROVIDER_COOLDOWN_MAX_SEC="3600"
+PROVIDER_EXPLORATION_INTERVAL_SEC="86400"
+PROVIDER_LOG_RANKING="no"
 ```
 
 ---
 
-## 🌐 Public IP Detection Strategy
+## Provider Ranking
 
-Order:
+When `IP_PROVIDER_MODE="adaptive"`, the configured provider order is only a weak signal:
 
-1. HTTPS primary (`api.ipify.org`)
-2. HTTPS secondary (`ifconfig.co`)
-3. OpenDNS
-4. Google DNS
+- cold-start priority when no statistics exist
+- tie-breaker when scores are close
 
-### Why HTTPS first?
+After runtime statistics are available, ranking is dominated by:
 
-* Works when port 53 is blocked
-* More stable in enterprise / cloud networks
-* Uses standard outbound HTTPS (443)
+- success rate
+- consecutive failures
+- cooldown state
+- EWMA latency
+- exploration interval
+
+To force configured order:
+
+```bash
+IP_PROVIDER_MODE="static"
+```
 
 ---
 
-## 🔀 IP Family Control
+## Provider Statistics
 
-| Value  | Behavior                         |
-| ------ | -------------------------------- |
-| `4`    | Force IPv4 (`curl -4`, `dig -4`) |
-| `6`    | Force IPv6 (`curl -6`, `dig -6`) |
-| `auto` | No restriction                   |
+Provider statistics are stored in:
 
-Example:
+```text
+/var/lib/namesilo-ddns/provider_stats.tsv
+```
+
+View them with:
+
+```bash
+sudo column -t -s $'\t' /var/lib/namesilo-ddns/provider_stats.tsv
+```
+
+Reset statistics:
+
+```bash
+sudo rm -f /var/lib/namesilo-ddns/provider_stats.tsv
+sudo systemctl start namesilo-ddns.service
+```
+
+First run behavior:
+
+- missing `provider_stats.tsv` is normal
+- unreadable stats file logs a warning and starts with empty statistics
+- unwritable stats file logs a warning; the current run continues but statistics are not persisted
+- `last_ip` is critical state; if an existing `last_ip` file is unreadable or not a regular file, the updater fails to avoid unnecessary NameSilo API calls
+
+---
+
+## IP Family
+
+| Value | Behavior |
+|---|---|
+| `4` | force IPv4 with `curl -4` and `dig -4` |
+| `6` | force IPv6 with `curl -6` and `dig -6` |
+| `auto` | do not force address family |
+
+For IPv4 A records, use:
 
 ```bash
 IP_FAMILY="4"
@@ -177,141 +230,66 @@ IP_FAMILY="4"
 
 ---
 
-## ⏱ Timer Behavior
+## Timer
 
-Default:
+Default timer behavior:
 
 ```ini
 OnBootSec=30s
 OnUnitInactiveSec=5min
 ```
 
-Meaning:
-
-* Run once after boot
-* Then run every 5 minutes
-
----
-
-## 🔧 Modify Interval
+Change the interval with a systemd override:
 
 ```bash
 sudo systemctl edit namesilo-ddns.timer
-```
-
-Example:
-
-```ini
-[Timer]
-OnUnitInactiveSec=1min
-```
-
-Reload:
-
-```bash
 sudo systemctl daemon-reload
 sudo systemctl restart namesilo-ddns.timer
 ```
 
 ---
 
-## ▶️ Manual Run
+## Logs
 
 ```bash
-sudo systemctl start namesilo-ddns.service
+sudo journalctl -u namesilo-ddns.service -f
+sudo journalctl -t namesilo-ddns-check -n 100 --no-pager
+sudo journalctl -u namesilo-ddns.timer -u namesilo-ddns.service -n 200 --no-pager
 ```
 
-Use for:
-
-* Immediate update
-* Testing
-* Debugging
-
----
-
-## 📊 Logs
+Check timer status:
 
 ```bash
-journalctl -u namesilo-ddns.service -f
-```
-
----
-
-## 🔍 Troubleshooting
-
-### No IP detected
-
-* Check HTTPS connectivity (443)
-* Check DNS (53)
-* Inspect logs
-
-### Timer not running
-
-```bash
+systemctl list-timers | grep namesilo
 systemctl status namesilo-ddns.timer
 ```
 
-### DNS not updated
-
-* Verify API key
-* Verify domain/host
-* Check NameSilo response code
-
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```text
 .
 ├── README.md
 ├── build-deb.sh
-├── bin/
-│   └── namesilo-ddns-check.sh
-├── packaging/
-│   └── debian/
-│       ├── DEBIAN/
-│       │   ├── control
-│       │   ├── postinst
-│       │   └── prerm
-│       ├── etc/default/namesilo-ddns
-│       ├── lib/systemd/system/
-│       │   ├── namesilo-ddns.service
-│       │   └── namesilo-ddns.timer
-│       └── usr/lib/namesilo-ddns/
-│           └── namesilo-ddns-check.sh
+├── bin/namesilo-ddns-check.sh
+├── packaging/debian/DEBIAN/
+├── packaging/debian/etc/default/namesilo-ddns
+├── packaging/debian/etc/namesilo-ddns/record.conf.example
+├── packaging/debian/lib/systemd/system/
 └── dist/
 ```
 
 ---
 
-## 🔐 Security
+## Security
 
-```bash
-chmod 600 /etc/default/namesilo-ddns
-```
-
----
-
-## 🧠 Design Philosophy
-
-* Keep it simple
-* Keep it reliable
-* Keep it systemd-native
-
-Avoid:
-
-* Daemons
-* Network coupling
-* Over-engineering
+- Store credentials only in `/etc/namesilo-ddns/record.conf`.
+- Restrict permissions with `sudo chmod 600 /etc/namesilo-ddns/record.conf`.
+- Provider statistics do not contain credentials, but they may expose runtime network behavior.
 
 ---
 
-## 📄 License
+## License
 
 MIT License
-
----
-
-## 🤝 Contribution
-
-Pull requests and issues are welcome.
