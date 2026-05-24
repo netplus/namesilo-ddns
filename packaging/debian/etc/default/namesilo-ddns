@@ -1,53 +1,158 @@
 # Configuration file for namesilo-ddns.
 #
-# All comments are intentionally verbose so the file can also serve as a
-# deployment reference on production hosts.
+# This file is sourced by the namesilo-ddns oneshot service through systemd.
+# Keep the syntax shell-compatible:
+#
+#   KEY="value"
+#
+# Do not add spaces around "=".
+#
+# Domain-specific settings such as API_KEY, DOMAIN, HOST, and TTL are kept in
+# /etc/namesilo-ddns/record.conf so package upgrades can update general runtime
+# defaults without touching record-specific values.
 
-# Required: NameSilo API key.
-# Replace the placeholder below before enabling the timer in production.
-API_KEY="REPLACE_WITH_YOUR_NAMESILO_API_KEY"
+###############################################################################
+# Record configuration
+###############################################################################
 
-# Required: Zone name managed in NameSilo.
-DOMAIN="example.com"
+# Domain/record configuration file.
+#
+# This file should contain:
+#   API_KEY="..."
+#   DOMAIN="example.com"
+#   HOST="home"
+#   TTL="3600"
+DOMAIN_CONFIG_FILE="/etc/namesilo-ddns/record.conf"
 
-# Required: Host part of the DNS record.
-# Use "@" for the zone apex, or a simple label such as "home" or "fhy".
-HOST="home"
+###############################################################################
+# Runtime state
+###############################################################################
 
-# Optional: TTL to write when updating the record.
-TTL="3600"
-
-# Optional: State directory used to store the last known IP, last log time,
-# and the lock file that prevents concurrent execution.
+# State directory used to store:
+#   - last known IP
+#   - last "no change" log timestamp
+#   - lock file
+#   - provider runtime statistics
 STATE_DIR="/var/lib/namesilo-ddns"
 
-# Optional: Log the "no public IP change" message no more than once during
-# this interval. This avoids flooding the journal.
+# Provider statistics file.
+#
+# If empty or unset, the script uses:
+#   ${STATE_DIR}/provider_stats.tsv
+#
+# The statistics file is soft runtime state. If it is missing, unreadable, or
+# temporarily unwritable, the updater logs a warning and continues.
+PROVIDER_STATS_FILE="/var/lib/namesilo-ddns/provider_stats.tsv"
+
+# Log the "no public IP change" message no more than once during this interval.
+# This avoids flooding the journal during normal steady state.
 NO_CHANGE_LOG_INTERVAL_SEC="86400"
 
-# Optional: curl timeouts for NameSilo API access.
-CURL_CONNECT_TIMEOUT_SEC="10"
-CURL_MAX_TIME_SEC="30"
+###############################################################################
+# Service behavior
+###############################################################################
 
-# Optional: delay before retrying the public IP discovery through Google DNS
-# after an OpenDNS lookup failure.
-DNS_LOOKUP_RETRY_DELAY_SEC="5"
-
-# Optional: add a small random delay before each run. This is useful when many
-# hosts share the same timer schedule and hit the same remote API.
+# Add a small random delay before each run.
+#
+# This is useful when many hosts share the same timer schedule and may otherwise
+# hit the same remote service at the same time.
 ENABLE_STARTUP_RANDOM_DELAY="yes"
 STARTUP_RANDOM_DELAY_MAX_SEC="5"
 
-# Force public IP lookup family: 4, 6, or auto.
+###############################################################################
+# IP family
+###############################################################################
+
+# Force public IP lookup family:
+#
+#   4    -> force IPv4 with curl -4 and dig -4
+#   6    -> force IPv6 with curl -6 and dig -6
+#   auto -> do not force address family
+#
+# For IPv4 A records, keep this as "4".
 IP_FAMILY="4"
 
-# DNS lookup timeout controls.
+###############################################################################
+# Provider selection
+###############################################################################
+
+# Public IP provider selection mode:
+#
+#   adaptive -> rank providers using runtime statistics
+#   static   -> always use configured provider order
+#
+# Adaptive mode is recommended for long-running systems because it can
+# automatically prefer the providers that work best in the current network.
+IP_PROVIDER_MODE="adaptive"
+
+# Enable HTTP-based public IP providers.
+#
+# The legacy ENABLE_HTTP_FALLBACK variable is still accepted by the script for
+# backward compatibility, but new deployments should use ENABLE_HTTP_PROVIDERS.
+ENABLE_HTTP_PROVIDERS="yes"
+
+# HTTP IP echo providers.
+#
+# These are queried by curl. The configured order is used only as cold-start
+# priority and tie-breaker in adaptive mode. In static mode, it becomes the
+# actual query order.
+#
+# Prefer endpoints that return a plain IP address, not HTML or JSON.
+HTTP_IP_ECHO_PROVIDERS="https://ifconfig.co/ip https://ifconfig.me/ip https://ifconfig.io/ip https://ident.me https://icanhazip.com https://api.ipify.org"
+
+# DNS IP echo providers.
+#
+# Supported values:
+#   opendns -> dig myip.opendns.com @resolverX.opendns.com
+#   google  -> dig TXT o-o.myaddr.l.google.com @nsX.google.com
+DNS_IP_ECHO_PROVIDERS="opendns google"
+
+# Backward-compatible HTTP endpoint settings.
+#
+# Older versions used primary/secondary HTTP endpoints. They are still accepted
+# by the script when HTTP_IP_ECHO_PROVIDERS is not explicitly set.
+HTTP_IP_ECHO_PRIMARY="https://ifconfig.co/ip"
+HTTP_IP_ECHO_SECONDARY="https://ifconfig.me/ip"
+
+###############################################################################
+# Adaptive provider ranking
+###############################################################################
+
+# Maximum consecutive failures before a provider enters cooldown.
+PROVIDER_MAX_CONSECUTIVE_FAILS="3"
+
+# Base cooldown duration in seconds.
+#
+# Actual cooldown is approximately:
+#   min(PROVIDER_COOLDOWN_BASE_SEC * consecutive_failures,
+#       PROVIDER_COOLDOWN_MAX_SEC)
+PROVIDER_COOLDOWN_BASE_SEC="300"
+
+# Maximum provider cooldown duration in seconds.
+PROVIDER_COOLDOWN_MAX_SEC="3600"
+
+# Exploration interval in seconds.
+#
+# A provider that has not been attempted for this long may receive a small
+# ranking bonus so it can be retried and possibly recover from older failures.
+PROVIDER_EXPLORATION_INTERVAL_SEC="86400"
+
+# Log the provider ranking before trying providers.
+#
+# This is useful for debugging but can be noisy. Keep it disabled by default.
+PROVIDER_LOG_RANKING="no"
+
+###############################################################################
+# Network timeout tuning
+###############################################################################
+
+# curl timeouts for both public IP HTTP providers and NameSilo API access.
+CURL_CONNECT_TIMEOUT_SEC="10"
+CURL_MAX_TIME_SEC="30"
+
+# dig timeout controls for DNS-based public IP providers.
 DIG_TIMEOUT_SEC="3"
 DIG_TRIES="1"
 
-# Enable HTTPS fallback when DNS-based IP lookup fails.
-ENABLE_HTTP_FALLBACK="yes"
-
-# Primary and secondary HTTP IP echo services.
-HTTP_IP_ECHO_PRIMARY="https://api.ipify.org"
-HTTP_IP_ECHO_SECONDARY="https://ifconfig.co"
+# Delay before moving between DNS fallback paths where applicable.
+DNS_LOOKUP_RETRY_DELAY_SEC="5"
