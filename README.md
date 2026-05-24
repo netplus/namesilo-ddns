@@ -37,7 +37,22 @@ This split keeps domain-specific values stable during package upgrades. Future c
 
 ---
 
-## Execution Flow
+## End-to-End Update Flow
+
+The DDNS update flow has three distinct phases:
+
+```text
+Phase 1: public IP discovery
+    provider pool → ranking → query → validation → provider statistics
+
+Phase 2: local change detection
+    current public IP → compare with cached last_ip
+
+Phase 3: NameSilo update
+    only when IP changed → dnsListRecords → dnsUpdateRecord → update local cache
+```
+
+Full execution path:
 
 ```text
 namesilo-ddns.timer
@@ -50,20 +65,184 @@ load /etc/namesilo-ddns/record.conf
     ↓
 load provider statistics
     ↓
-build and rank provider pool
+build provider pool
     ↓
-query public IP providers
+rank providers
     ↓
-validate returned IP
+try providers in ranked order
+    ↓
+validate returned public IP
     ↓
 update provider statistics
     ↓
-compare with cached IP
-    ├── unchanged → exit without calling NameSilo API
-    └── changed   → dnsListRecords → dnsUpdateRecord
+compare with cached public IP
+    ├── unchanged
+    │       └── exit 0
+    │           no dnsListRecords
+    │           no dnsUpdateRecord
+    │
+    └── changed
+            ↓
+        dnsListRecords
+            ↓
+        find record_id
+            ↓
+        dnsUpdateRecord
+            ↓
+        update local last_ip cache
 ```
 
 The public IP lookup path is a feedback-driven query flow, not a fixed fallback chain.
+
+---
+
+## Provider Subsystem
+
+The provider subsystem is responsible only for one thing: discovering the current public IP.
+
+It does **not** update DNS directly. DNS update is a later stage and happens only after the discovered public IP is compared with the cached `last_ip` value.
+
+### Provider Control Plane
+
+The control plane decides **which provider should be tried first**.
+
+```text
+configuration
+    ↓
+HTTP_IP_ECHO_PROVIDERS
+DNS_IP_ECHO_PROVIDERS
+    ↓
+registered provider pool
+    ↓
+provider_stats.tsv
+    ↓
+adaptive score calculation
+    ↓
+ranked provider list
+```
+
+Signals used by adaptive ranking:
+
+| Signal | Role |
+|---|---|
+| success count | raises confidence |
+| failure count | lowers confidence |
+| consecutive failures | strong penalty |
+| EWMA latency | penalizes slow providers |
+| cooldown state | temporarily suppresses bad providers |
+| exploration interval | gives old failed providers a chance to recover |
+| configured order | cold-start priority and tie-breaker only |
+
+In `adaptive` mode, configured order is intentionally weak. Once runtime statistics exist, provider quality is dominated by observed behavior, not by list position.
+
+In `static` mode, configured order becomes the actual query order.
+
+### Provider Data Plane
+
+The data plane performs the actual public IP lookup.
+
+```text
+ranked provider
+    ↓
+provider type?
+    ├── http
+    │       └── curl [-4|-6] <endpoint>
+    │
+    └── dns
+            ├── opendns → dig [-4|-6] myip.opendns.com @resolverX.opendns.com
+            └── google  → dig [-4|-6] TXT o-o.myaddr.l.google.com @nsX.google.com
+    ↓
+raw output
+    ↓
+parse public IP
+    ↓
+validate against IP_FAMILY
+```
+
+HTTP providers are configured by:
+
+```bash
+HTTP_IP_ECHO_PROVIDERS="https://ifconfig.co/ip https://ifconfig.me/ip https://ifconfig.io/ip https://ident.me https://icanhazip.com https://api.ipify.org"
+```
+
+DNS providers are configured by:
+
+```bash
+DNS_IP_ECHO_PROVIDERS="opendns google"
+```
+
+Supported DNS providers:
+
+| Provider | Query method |
+|---|---|
+| `opendns` | `dig myip.opendns.com @resolverX.opendns.com` |
+| `google` | `dig TXT o-o.myaddr.l.google.com @nsX.google.com` |
+
+### Provider Feedback Loop
+
+Every provider attempt updates runtime statistics.
+
+```text
+provider attempt
+    ↓
+success?
+    ├── yes
+    │       ├── success += 1
+    │       ├── consecutive_fail = 0
+    │       ├── update ewma_ms
+    │       ├── clear cooldown
+    │       └── save provider_stats.tsv
+    │
+    └── no
+            ├── fail += 1
+            ├── consecutive_fail += 1
+            ├── update last_fail
+            ├── maybe enter cooldown
+            └── save provider_stats.tsv
+```
+
+This loop allows namesilo-ddns to adapt to the current host network. A provider that repeatedly fails will be pushed back or cooled down; a provider that is fast and stable will naturally move forward.
+
+### Provider Failure Scope
+
+Provider failures do not directly mean DDNS update failure.
+
+```text
+provider A fails
+    ↓
+record failure statistics
+    ↓
+try next ranked provider
+```
+
+Only when all usable providers fail does the service fail with:
+
+```text
+Unable to determine current public IP via configured provider pool
+```
+
+---
+
+## NameSilo API Gate
+
+The NameSilo API is protected by a local change-detection gate.
+
+```text
+current public IP
+    ↓
+compare with last_ip cache
+    ↓
+changed?
+    ├── no  → exit 0; do not call NameSilo
+    └── yes → call NameSilo APIs
+```
+
+When the IP is unchanged, the updater does not call:
+
+- `dnsListRecords`
+- `dnsUpdateRecord`
+
+This is intentional. It reduces API traffic and avoids unnecessary writes.
 
 ---
 
@@ -157,29 +336,6 @@ PROVIDER_COOLDOWN_BASE_SEC="300"
 PROVIDER_COOLDOWN_MAX_SEC="3600"
 PROVIDER_EXPLORATION_INTERVAL_SEC="86400"
 PROVIDER_LOG_RANKING="no"
-```
-
----
-
-## Provider Ranking
-
-When `IP_PROVIDER_MODE="adaptive"`, the configured provider order is only a weak signal:
-
-- cold-start priority when no statistics exist
-- tie-breaker when scores are close
-
-After runtime statistics are available, ranking is dominated by:
-
-- success rate
-- consecutive failures
-- cooldown state
-- EWMA latency
-- exploration interval
-
-To force configured order:
-
-```bash
-IP_PROVIDER_MODE="static"
 ```
 
 ---
