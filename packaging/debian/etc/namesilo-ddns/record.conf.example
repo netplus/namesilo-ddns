@@ -1,0 +1,26 @@
+# NameSilo DNS record configuration for namesilo-ddns.
+#
+# Copy this file to:
+#
+#   /etc/namesilo-ddns/record.conf
+#
+# Then replace all placeholder values and restrict permissions:
+#
+#   sudo chmod 600 /etc/namesilo-ddns/record.conf
+#
+# This file contains domain-specific values and secrets. It is intentionally
+# separate from /etc/default/namesilo-ddns so general runtime defaults can be
+# updated without touching the DNS record identity.
+
+# Required: NameSilo API key.
+API_KEY="REPLACE_WITH_YOUR_NAMESILO_API_KEY"
+
+# Required: zone name managed in NameSilo.
+DOMAIN="example.com"
+
+# Required: host part of the DNS record.
+# Use "@" for the zone apex, or a simple label such as "home", "gold", or "fhy".
+HOST="home"
+
+# Optional: TTL to write when updating the record.
+TTL="3600"
