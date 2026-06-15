@@ -19,6 +19,26 @@ The updater detects the current public IP, compares it with the cached value, an
 
 ---
 
+## Dependencies
+
+Required runtime packages (declared in `DEBIAN/control`):
+
+| Package | Purpose |
+|---|---|
+| `bash` | Script interpreter |
+| `curl` | HTTP public-IP providers and NameSilo API calls |
+| `dnsutils` | `dig` for DNS-based public-IP providers |
+| `libxml2-utils` | `xmllint` for NameSilo XML API responses |
+| `systemd` | Timer and service management |
+
+Install on a fresh Debian system:
+
+```bash
+sudo apt-get install -y bash curl dnsutils libxml2-utils systemd
+```
+
+---
+
 ## Configuration Layout
 
 namesilo-ddns uses two configuration files:
