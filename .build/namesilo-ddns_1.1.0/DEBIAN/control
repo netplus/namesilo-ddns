@@ -1,10 +1,9 @@
 Package: namesilo-ddns
-Version: 1.2.0
+Version: 1.1.0
 Section: admin
 Priority: optional
 Architecture: all
 Maintainer: OpenAI <support@example.invalid>
-Homepage: https://github.com/netplus/namesilo-ddns
 Depends: bash, curl, dnsutils, libxml2-utils, systemd
 Description: NameSilo DDNS updater with systemd timer integration
  A production-oriented NameSilo DDNS updater for Debian 13.

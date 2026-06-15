@@ -1,3 +1,8 @@
+# namesilo-ddns config
+#
+# Source repository:
+#   GitHub: https://github.com/netplus/namesilo-ddns
+#
 # Configuration file for namesilo-ddns.
 #
 # This file is sourced by the namesilo-ddns oneshot service through systemd.

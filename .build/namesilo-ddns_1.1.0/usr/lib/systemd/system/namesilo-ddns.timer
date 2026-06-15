@@ -1,0 +1,17 @@
+[Unit]
+Description=Periodic NameSilo DDNS update timer
+Documentation=file:/usr/share/doc/namesilo-ddns/README.md
+
+[Timer]
+# Trigger one run shortly after boot so the record converges quickly.
+OnBootSec=30s
+# Schedule the next run five minutes after the previous service run finished.
+OnUnitInactiveSec=5min
+# The default AccuracySec is one minute. Use a tighter value because DDNS jobs
+# are lightweight and users often expect the interval to be relatively close to
+# the configured schedule.
+AccuracySec=5s
+Unit=namesilo-ddns.service
+
+[Install]
+WantedBy=timers.target

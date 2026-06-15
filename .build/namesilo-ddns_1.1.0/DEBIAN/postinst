@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+mkdir -p /var/lib/namesilo-ddns
+chmod 0750 /var/lib/namesilo-ddns
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable namesilo-ddns.timer >/dev/null 2>&1 || true
+fi
+
+exit 0

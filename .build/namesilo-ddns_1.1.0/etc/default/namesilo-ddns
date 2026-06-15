@@ -1,0 +1,53 @@
+# Configuration file for namesilo-ddns.
+#
+# All comments are intentionally verbose so the file can also serve as a
+# deployment reference on production hosts.
+
+# Required: NameSilo API key.
+# Replace the placeholder below before enabling the timer in production.
+API_KEY="REPLACE_WITH_YOUR_NAMESILO_API_KEY"
+
+# Required: Zone name managed in NameSilo.
+DOMAIN="example.com"
+
+# Required: Host part of the DNS record.
+# Use "@" for the zone apex, or a simple label such as "home" or "fhy".
+HOST="home"
+
+# Optional: TTL to write when updating the record.
+TTL="3600"
+
+# Optional: State directory used to store the last known IP, last log time,
+# and the lock file that prevents concurrent execution.
+STATE_DIR="/var/lib/namesilo-ddns"
+
+# Optional: Log the "no public IP change" message no more than once during
+# this interval. This avoids flooding the journal.
+NO_CHANGE_LOG_INTERVAL_SEC="86400"
+
+# Optional: curl timeouts for NameSilo API access.
+CURL_CONNECT_TIMEOUT_SEC="10"
+CURL_MAX_TIME_SEC="30"
+
+# Optional: delay before retrying the public IP discovery through Google DNS
+# after an OpenDNS lookup failure.
+DNS_LOOKUP_RETRY_DELAY_SEC="5"
+
+# Optional: add a small random delay before each run. This is useful when many
+# hosts share the same timer schedule and hit the same remote API.
+ENABLE_STARTUP_RANDOM_DELAY="yes"
+STARTUP_RANDOM_DELAY_MAX_SEC="5"
+
+# Force public IP lookup family: 4, 6, or auto.
+IP_FAMILY="4"
+
+# DNS lookup timeout controls.
+DIG_TIMEOUT_SEC="3"
+DIG_TRIES="1"
+
+# Enable HTTPS fallback when DNS-based IP lookup fails.
+ENABLE_HTTP_FALLBACK="yes"
+
+# Primary and secondary HTTP IP echo services.
+HTTP_IP_ECHO_PRIMARY="https://api.ipify.org"
+HTTP_IP_ECHO_SECONDARY="https://ifconfig.co"
